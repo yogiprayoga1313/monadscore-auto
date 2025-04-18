@@ -23,7 +23,7 @@ An auto-running Node.js bot for Monadscore that automatically updates start time
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/monadscore-auto.git
+git clone https://github.com/yogiprayoga1313/monadscore-auto.git
 cd monadscore-auto
 ```
 
