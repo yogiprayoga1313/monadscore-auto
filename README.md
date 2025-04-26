@@ -11,7 +11,7 @@ Bot for automating Monadscore node running and daily check-in.
 
 1. Clone this repository:
 ```bash
-git clone <repository_url>
+git clone https://github.com/yogiprayoga1313/monadscore-auto.git
 cd monadscore-auto
 ```
 
