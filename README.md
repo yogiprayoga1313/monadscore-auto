@@ -29,13 +29,9 @@ yarn install
      ```
    - Edit `.env` file and fill in your information:
      ```env
-     # Your wallet private key (without 0x prefix)
+     # Single Account
      PRIVATE_KEY=your_private_key_here
-
-     # JWT Token from Monadscore (get from browser after login)
      JWT_TOKEN=your_jwt_token_here
-
-     # Working API URL
      API_URL=https://mscore-production.up.railway.app
      ```
 
@@ -103,4 +99,22 @@ If you get connection errors:
 - Always backup your `.env` file in a secure location
 
 ## Disclaimer
-This bot is not affiliated with Monad team or Monadscore. Use at your own risk. 
+This bot is not affiliated with Monad team or Monadscore. Use at your own risk.
+
+## Multiple Accounts Setup
+
+To run multiple nodes simultaneously, configure your `.env` file with numbered accounts:
+
+```env
+# Account 1
+PRIVATE_KEY_1=your_first_private_key_here
+JWT_TOKEN_1=your_first_jwt_token_here
+
+# Account 2
+PRIVATE_KEY_2=your_second_private_key_here
+JWT_TOKEN_2=your_second_jwt_token_here
+
+API_URL=https://mscore-production.up.railway.app
+```
+
+The bot will automatically detect and run all configured accounts. 

@@ -4,15 +4,12 @@ const axios = require('axios');
 const moment = require('moment');
 
 class MonadscoreBot {
-    constructor(privateKey, apiUrl) {
+    constructor(privateKey, jwt) {
         this.provider = new ethers.JsonRpcProvider('https://testnet-rpc.monad.xyz');
         this.wallet = new ethers.Wallet(privateKey, this.provider);
         this.walletAddress = this.wallet.address;
-        this.apiUrl = 'https://mscore-production.up.railway.app';
-        this.token = process.env.JWT_TOKEN;
-        if (!this.token) {
-            throw new Error('JWT_TOKEN not found in environment variables');
-        }
+        this.apiUrl = process.env.API_URL;
+        this.token = jwt;
         this.maxRetries = 5;
         this.retryDelay = 3000;
         this.isRunning = false;
@@ -307,57 +304,104 @@ class MonadscoreBot {
 class BotManager {
     constructor() {
         this.bots = [];
-        this.initializeBots();
     }
 
-    initializeBots() {
-        const privateKeys = process.env.PRIVATE_KEYS ? 
-            process.env.PRIVATE_KEYS.split(',') : 
-            [process.env.PRIVATE_KEY];
-
-        if (!privateKeys || privateKeys.length === 0) {
-            console.error('No private keys found in .env file');
-            process.exit(1);
+    addBot(privateKey, jwt) {
+        try {
+            const bot = new MonadscoreBot(privateKey, jwt);
+            this.bots.push(bot);
+            console.log(`✅ Added bot for wallet: ${bot.walletAddress}`);
+            return true;
+        } catch (error) {
+            console.error(`❌ Failed to add bot: ${error.message}`);
+            return false;
         }
-
-        privateKeys.forEach(pk => {
-            if (pk.trim()) {
-                this.bots.push(new MonadscoreBot(pk.trim(), process.env.API_URL || 'https://mscore.onrender.com'));
-            }
-        });
-
-        console.log(`Initialized ${this.bots.length} bots`);
     }
 
-    async startAll() {
-        console.log('Starting all Monadscore Bots...');
-        
+    async startAllBots() {
+        console.log(`🚀 Starting all Monadscore Bots...`);
         for (const bot of this.bots) {
             try {
+                console.log(`\n📍 Starting bot for wallet: ${bot.walletAddress}`);
                 await bot.monitorPoints();
             } catch (error) {
-                console.error(`Error starting bot for wallet ${bot.walletAddress}:`, error.message);
+                console.error(`❌ Error starting bot for wallet ${bot.walletAddress}:`, error.message);
             }
         }
     }
 }
 
 function validateEnv() {
-    const required = ['PRIVATE_KEY', 'JWT_TOKEN'];
-    const missing = required.filter(key => !process.env[key]);
-    
-    if (missing.length > 0) {
-        throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+    const accounts = [];
+
+    // Cek format lama (single account)
+    if (process.env.PRIVATE_KEY && process.env.JWT_TOKEN) {
+        accounts.push({
+            privateKey: process.env.PRIVATE_KEY,
+            jwt: process.env.JWT_TOKEN
+        });
     }
+
+    // Cek format baru (multiple accounts)
+    let accountIndex = 1;
+    while (true) {
+        const privateKey = process.env[`PRIVATE_KEY_${accountIndex}`];
+        const jwt = process.env[`JWT_TOKEN_${accountIndex}`];
+        
+        if (!privateKey || !jwt) {
+            break;
+        }
+        
+        accounts.push({ privateKey, jwt });
+        accountIndex++;
+    }
+
+    if (accounts.length === 0) {
+        throw new Error('No valid account configurations found in .env file');
+    }
+
+    if (!process.env.API_URL) {
+        process.env.API_URL = 'https://mscore-production.up.railway.app';
+    }
+
+    return accounts;
 }
 
 async function main() {
     try {
-        validateEnv();
-        const botManager = new BotManager();
-        await botManager.startAll();
+        console.log('🔍 Checking environment configuration...');
+        const accounts = validateEnv();
+        console.log(`📋 Found ${accounts.length} account configuration${accounts.length > 1 ? 's' : ''}`);
+
+        const manager = new BotManager();
+        
+        // Add all bots
+        for (const account of accounts) {
+            manager.addBot(account.privateKey, account.jwt);
+        }
+
+        const activeBotsCount = manager.bots.length;
+        if (activeBotsCount === 0) {
+            throw new Error('No bots could be initialized. Please check your configuration.');
+        }
+
+        console.log(`\n🤖 Initialized ${activeBotsCount} bot${activeBotsCount > 1 ? 's' : ''}`);
+        
+        // Start all bots
+        await manager.startAllBots();
     } catch (error) {
-        console.error('Error:', error.message);
+        console.error('❌ Error:', error.message);
+        console.log('\n📝 Please ensure your .env file contains either:');
+        console.log('\nFormat 1 (Single account):');
+        console.log('PRIVATE_KEY=your_private_key_here');
+        console.log('JWT_TOKEN=your_jwt_token_here');
+        console.log('\nOR\n');
+        console.log('Format 2 (Multiple accounts):');
+        console.log('PRIVATE_KEY_1=your_first_private_key_here');
+        console.log('JWT_TOKEN_1=your_first_jwt_token_here');
+        console.log('PRIVATE_KEY_2=your_second_private_key_here');
+        console.log('JWT_TOKEN_2=your_second_jwt_token_here');
+        console.log('\nAPI_URL=https://mscore-production.up.railway.app');
         process.exit(1);
     }
 }
