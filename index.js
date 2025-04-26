@@ -4,120 +4,105 @@ const axios = require('axios');
 const moment = require('moment');
 
 class MonadscoreBot {
-    constructor(privateKey) {
-        const wallet = new ethers.Wallet(privateKey);
-        this.walletAddress = wallet.address;
-        this.token = process.env.JWT_TOKEN || null;
-        this.startTime = null;
-        this.lastPoints = null;
-        this.sessionStartPoints = null;
-        this.sessionStartTime = null;
-        this.apiUrl = process.env.API_URL || 'https://mscore.onrender.com';
-        this.maxRetries = 3;
-        this.retryDelay = 10000; // 10 seconds
+    constructor(privateKey, apiUrl) {
+        this.provider = new ethers.JsonRpcProvider('https://testnet-rpc.monad.xyz');
+        this.wallet = new ethers.Wallet(privateKey, this.provider);
+        this.walletAddress = this.wallet.address;
+        this.apiUrl = 'https://mscore-production.up.railway.app';
+        this.token = process.env.JWT_TOKEN;
+        if (!this.token) {
+            throw new Error('JWT_TOKEN not found in environment variables');
+        }
+        this.maxRetries = 5;
+        this.retryDelay = 3000;
+        this.isRunning = false;
+        this.lastCheckIn = null;
+        this.checkedInToday = false;
+        this.lastPoints = 0;
     }
 
-    sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
-    async login() {
+    async signStartMessage() {
         try {
-            console.log('Attempting to login...');
-            const response = await axios({
-                method: 'post',
-                url: `${this.apiUrl}/user/login`,
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': '*/*',
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                    'Origin': 'https://monadscore.xyz',
-                    'Referer': 'https://monadscore.xyz/'
-                },
-                data: {
-                    wallet: this.walletAddress
-                }
-            });
-
-            if (response.data.success && response.data.token) {
-                this.token = response.data.token;
-                console.log('Login successful');
-                return true;
-            }
-            return false;
+            console.log('Signing start message...');
+            const messageToSign = `Sign this message to verify ownership and start mining on monad score!\n\n${this.walletAddress} `;
+            console.log('Message to sign:', messageToSign);
+            
+            const signature = await this.wallet.signMessage(messageToSign);
+            console.log('Message signed successfully');
+            return signature;
         } catch (error) {
-            console.error('Login error:', error.message);
-            if (error.response?.data) {
-                console.error('API Response:', error.response.data);
-            }
-            return false;
+            console.error('Error signing message:', error.message);
+            return null;
         }
     }
 
-    async checkNodeStatus() {
+    async startNode(retryCount = 0) {
         try {
-            if (!this.token) {
-                await this.login();
+            console.log('Starting node...');
+            
+            const signature = await this.signStartMessage();
+            if (!signature) {
+                throw new Error('Failed to sign start message');
             }
 
+            const currentTime = Date.now();
             const response = await axios({
-                method: 'post',
-                url: `${this.apiUrl}/user/login`,
+                method: 'put',
+                url: `${this.apiUrl}/user/update-start-time`,
                 headers: {
-                    'Authorization': `Bearer ${this.token}`,
-                    'Content-Type': 'application/json',
-                    'Accept': '*/*',
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                    'Origin': 'https://monadscore.xyz',
-                    'Referer': 'https://monadscore.xyz/'
+                    'accept': 'application/json, text/plain, */*',
+                    'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'authorization': `Bearer ${this.token}`,
+                    'content-type': 'application/json',
+                    'dnt': '1',
+                    'origin': 'https://monadscore.xyz',
+                    'priority': 'u=1, i',
+                    'referer': 'https://monadscore.xyz/',
+                    'sec-ch-ua': '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"macOS"',
+                    'sec-fetch-dest': 'empty',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'cross-site',
+                    'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
                 },
                 data: {
-                    wallet: this.walletAddress
+                    wallet: this.walletAddress,
+                    startTime: currentTime,
+                    signature: signature
                 }
             });
 
-            if (response.data.success && response.data.user) {
-                const user = response.data.user;
-                
-                console.log('\nCurrent Status:');
-                console.log('- Node Uptime:', user.nodeUptime, 'minutes');
-                console.log('- Total Points:', user.totalPoints);
-                console.log('- Active Days:', user.activeDays);
-                console.log('- Last Check In:', user.lastCheckInDate);
-                console.log('- Next Total Points Target:', user.nextTotalPoints);
-                
-                if (response.data.token) {
-                    this.token = response.data.token;
-                }
-
-                return { 
-                    isRunning: user.nodeUptime > 0, 
-                    data: user,
-                    startTime: user.startTime
-                };
+            if (response.data.success) {
+                console.log('✓ Node started successfully!');
+                return true;
             }
-            return { isRunning: false, data: null };
+            console.error('Start node failed:', response.data);
+            return false;
         } catch (error) {
-            console.error('Error checking node status:', error.message);
-            if (error.response?.status === 401) {
-                console.log('Token expired, attempting to login again...');
-                await this.login();
-                return this.checkNodeStatus();
-            }
+            console.error('Error starting node:', error.message);
             if (error.response?.data) {
                 console.error('API Response:', error.response.data);
+                
+                if (error.response.data.message === 'Invalid or expired token.') {
+                    throw new Error('JWT Token expired. Please update JWT_TOKEN in .env file');
+                }
             }
-            return { isRunning: false, data: null };
+
+            if ((error.response?.status === 502 || error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') && retryCount < this.maxRetries) {
+                const waitTime = Math.min(Math.pow(2, retryCount) * this.retryDelay, 30000);
+                console.log(`Server error, retrying in ${waitTime/1000} seconds... (Attempt ${retryCount + 1}/${this.maxRetries})`);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
+                return this.startNode(retryCount + 1);
+            }
+
+            throw error;
         }
     }
 
     async updateStartTime(retryCount = 0) {
         try {
-            if (!this.token) {
-                await this.login();
-            }
-
-            console.log(`Attempting to update start time (attempt ${retryCount + 1}/${this.maxRetries})`);
+            const currentTime = Date.now();
 
             const response = await axios({
                 method: 'put',
@@ -125,99 +110,196 @@ class MonadscoreBot {
                 headers: {
                     'Authorization': `Bearer ${this.token}`,
                     'Content-Type': 'application/json',
-                    'Accept': '*/*',
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    'Accept': 'application/json, text/plain, */*',
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
                     'Origin': 'https://monadscore.xyz',
-                    'Referer': 'https://monadscore.xyz/'
+                    'Referer': 'https://monadscore.xyz/',
+                    'sec-ch-ua': '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"macOS"',
+                    'DNT': '1'
                 },
                 data: {
                     wallet: this.walletAddress,
-                    startTime: Date.now()
+                    startTime: currentTime
                 }
             });
 
             if (response.data.success) {
-                console.log('Start time updated successfully:', response.data.message);
-                if (response.data.token) {
-                    this.token = response.data.token;
-                }
+                console.log('Start time updated successfully');
                 return true;
-            } else {
-                console.error('Update failed:', response.data);
-                return false;
             }
+            return false;
         } catch (error) {
             console.error('Error updating start time:', error.message);
-            if (error.response?.status === 401) {
-                console.log('Token expired, attempting to login again...');
-                await this.login();
-                return this.updateStartTime(retryCount);
-            }
             if (error.response?.data) {
                 console.error('API Response:', error.response.data);
             }
 
-            if (retryCount < this.maxRetries - 1) {
-                console.log(`Retrying in ${this.retryDelay/1000} seconds...`);
-                await this.sleep(this.retryDelay);
+            if (retryCount < this.maxRetries) {
+                console.log(`Retrying in ${this.retryDelay/1000} seconds... (Attempt ${retryCount + 1}/${this.maxRetries})`);
+                await new Promise(resolve => setTimeout(resolve, this.retryDelay));
                 return this.updateStartTime(retryCount + 1);
             }
-
             return false;
         }
     }
 
-    async monitorPoints() {
-        while (true) {
-            const status = await this.checkNodeStatus();
-            if (status.data) {
-                const user = status.data;
-                console.log('\nUpdated Points Information:');
-                console.log('- Total Points:', user.totalPoints.toFixed(2));
-                console.log('- Node Uptime:', user.nodeUptime, 'minutes');
-                console.log('- Active Days:', user.activeDays);
-                console.log('- Last Check In:', user.lastCheckInDate);
-                console.log('- Next Target:', user.nextTotalPoints);
-                console.log('- Start Time:', new Date(user.startTime).toLocaleString());
-                console.log('- Last Update:', new Date().toLocaleString());
-                console.log('----------------------------------------');
+    async checkIn() {
+        try {
+            if (this.checkedInToday) {
+                console.log('✓ Already checked in today');
+                return true;
             }
-            await this.sleep(30 * 1000); // Diubah menjadi 30 detik
+
+            console.log('Performing daily check-in...');
+            const response = await axios({
+                method: 'post',
+                url: `${this.apiUrl}/user/check-in`,
+                headers: {
+                    'Authorization': `Bearer ${this.token}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json, text/plain, */*',
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+                    'Origin': 'https://monadscore.xyz',
+                    'Referer': 'https://monadscore.xyz/',
+                    'sec-ch-ua': '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"macOS"',
+                    'DNT': '1'
+                },
+                data: {
+                    wallet: this.walletAddress
+                }
+            });
+
+            if (response.data.success) {
+                console.log('✓ Daily check-in successful!');
+                this.lastCheckIn = new Date();
+                this.checkedInToday = true;
+                return true;
+            }
+            return false;
+        } catch (error) {
+            if (error.response?.status === 400 && error.response.data.message?.includes('Already checked in')) {
+                console.log('✓ Already checked in today');
+                this.lastCheckIn = new Date();
+                this.checkedInToday = true;
+                return true;
+            }
+            
+            console.error('Error in check-in:', error.message);
+            return false;
         }
     }
 
-    async start() {
-        console.log('Monadscore Bot is running...');
-        console.log('Wallet Address:', this.walletAddress);
-
-        // Initial login if no token
-        if (!this.token) {
-            await this.login();
+    async resetDailyCheckIn() {
+        const now = new Date();
+        if (this.lastCheckIn) {
+            const lastCheckInDate = new Date(this.lastCheckIn);
+            if (lastCheckInDate.toDateString() !== now.toDateString()) {
+                console.log('Resetting daily check-in status...');
+                this.checkedInToday = false;
+                return true;
+            }
         }
-        console.log('Authentication:', this.token ? 'Successful' : 'Failed');
+        return false;
+    }
 
-        // Check initial node status
-        const status = await this.checkNodeStatus();
-        
-        if (status.isRunning) {
-            console.log('\nNode is already running!');
-            console.log('Current points:', status.data.totalPoints);
-            console.log('Current uptime:', status.data.nodeUptime, 'minutes');
-            console.log('Active days:', status.data.activeDays);
-            console.log('Start time:', new Date(status.data.startTime).toLocaleString());
-        } else {
-            console.log('\nNode is not running. Starting node...');
-            await this.updateStartTime();
+    async checkPoints() {
+        try {
+            const response = await axios({
+                method: 'post',
+                url: `${this.apiUrl}/user/login`,
+                headers: {
+                    'accept': 'application/json, text/plain, */*',
+                    'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'authorization': `Bearer ${this.token}`,
+                    'content-type': 'application/json',
+                    'dnt': '1',
+                    'origin': 'https://monadscore.xyz',
+                    'priority': 'u=1, i',
+                    'referer': 'https://monadscore.xyz/',
+                    'sec-ch-ua': '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"macOS"',
+                    'sec-fetch-dest': 'empty',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'cross-site',
+                    'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
+                },
+                data: {
+                    wallet: this.walletAddress
+                }
+            });
+
+            if (response.data.success) {
+                const userData = response.data;
+                if (userData.points !== undefined) {
+                    const currentPoints = userData.points;
+                    const pointsGained = currentPoints - this.lastPoints;
+                    
+                    if (this.lastPoints === 0) {
+                        console.log(`Current points: ${currentPoints}`);
+                    } else if (pointsGained > 0) {
+                        console.log(`Points updated: ${this.lastPoints} -> ${currentPoints} (+${pointsGained})`);
+                    } else {
+                        console.log(`Current points: ${currentPoints} (no change)`);
+                    }
+                    
+                    this.lastPoints = currentPoints;
+                    
+                    if (userData.token) {
+                        this.token = userData.token;
+                    }
+                    
+                    return currentPoints;
+                }
+            }
+            return null;
+        } catch (error) {
+            console.error('Error checking points:', error.message);
+            if (error.response?.data) {
+                console.error('API Response:', error.response.data);
+            }
+            return null;
         }
+    }
 
-        // Start monitoring points in the background
-        this.monitorPoints();
+    async monitorPoints() {
+        try {
+            console.log('Starting node monitoring...');
+            
+            const startSuccess = await this.startNode();
+            if (!startSuccess) {
+                throw new Error('Failed to start node');
+            }
 
-        // Schedule regular updates only if node wasn't running
-        if (!status.isRunning) {
+            this.isRunning = true;
+            console.log('✓ Node is now running!');
+
+            await this.checkPoints();
+
             setInterval(async () => {
-                await this.updateStartTime();
-            }, 30 * 1000); // Diubah menjadi 30 detik
+                try {
+                    if (this.isRunning) {
+                        const updateSuccess = await this.updateStartTime();
+                        if (updateSuccess) {
+                            console.log('✓ Start time updated successfully');
+                            await this.checkPoints();
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error in monitoring interval:', error.message);
+                }
+            }, 30000);
+
+        } catch (error) {
+            console.error('Error in point monitoring:', error.message);
+            this.isRunning = false;
+            
+            console.log('Restarting monitoring in 30 seconds...');
+            setTimeout(() => this.monitorPoints(), 30000);
         }
     }
 }
@@ -240,7 +322,7 @@ class BotManager {
 
         privateKeys.forEach(pk => {
             if (pk.trim()) {
-                this.bots.push(new MonadscoreBot(pk.trim()));
+                this.bots.push(new MonadscoreBot(pk.trim(), process.env.API_URL || 'https://mscore.onrender.com'));
             }
         });
 
@@ -252,7 +334,7 @@ class BotManager {
         
         for (const bot of this.bots) {
             try {
-                await bot.start();
+                await bot.monitorPoints();
             } catch (error) {
                 console.error(`Error starting bot for wallet ${bot.walletAddress}:`, error.message);
             }
@@ -260,11 +342,28 @@ class BotManager {
     }
 }
 
-// Main execution
-const botManager = new BotManager();
-botManager.startAll();
+function validateEnv() {
+    const required = ['PRIVATE_KEY', 'JWT_TOKEN'];
+    const missing = required.filter(key => !process.env[key]);
+    
+    if (missing.length > 0) {
+        throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+    }
+}
 
-// Handle errors
+async function main() {
+    try {
+        validateEnv();
+        const botManager = new BotManager();
+        await botManager.startAll();
+    } catch (error) {
+        console.error('Error:', error.message);
+        process.exit(1);
+    }
+}
+
+main();
+
 process.on('uncaughtException', (err) => {
     console.error('Uncaught Exception:', err);
     process.exit(1);
