@@ -124,6 +124,7 @@ class MonadscoreBot {
 
             if (response.data.success) {
                 console.log('Start time updated successfully');
+                await this.getNodePoints();
                 return true;
             }
             return false;
@@ -144,26 +145,26 @@ class MonadscoreBot {
 
     async checkIn() {
         try {
-            if (this.checkedInToday) {
-                console.log('✓ Already checked in today');
-                return true;
-            }
-
-            console.log('Performing daily check-in...');
+            console.log('Checking daily check-in status...');
             const response = await axios({
                 method: 'post',
                 url: `${this.apiUrl}/user/check-in`,
                 headers: {
-                    'Authorization': `Bearer ${this.token}`,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json, text/plain, */*',
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-                    'Origin': 'https://monadscore.xyz',
-                    'Referer': 'https://monadscore.xyz/',
+                    'accept': 'application/json, text/plain, */*',
+                    'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'authorization': `Bearer ${this.token}`,
+                    'content-type': 'application/json',
+                    'dnt': '1',
+                    'origin': 'https://monadscore.xyz',
+                    'priority': 'u=1, i',
+                    'referer': 'https://monadscore.xyz/',
                     'sec-ch-ua': '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
                     'sec-ch-ua-mobile': '?0',
                     'sec-ch-ua-platform': '"macOS"',
-                    'DNT': '1'
+                    'sec-fetch-dest': 'empty',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'cross-site',
+                    'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
                 },
                 data: {
                     wallet: this.walletAddress
@@ -171,21 +172,30 @@ class MonadscoreBot {
             });
 
             if (response.data.success) {
-                console.log('✓ Daily check-in successful!');
+                console.log('✅ Daily check-in successful!');
+                if (response.data.message) {
+                    console.log('📅 Check-in details:', response.data.message);
+                }
                 this.lastCheckIn = new Date();
                 this.checkedInToday = true;
                 return true;
             }
+            console.log('ℹ️ Check-in response:', response.data);
             return false;
+
         } catch (error) {
-            if (error.response?.status === 400 && error.response.data.message?.includes('Already checked in')) {
-                console.log('✓ Already checked in today');
-                this.lastCheckIn = new Date();
-                this.checkedInToday = true;
-                return true;
+            if (error.response?.data) {
+                if (error.response.data.message?.toLowerCase().includes('already checked in')) {
+                    console.log('✓ Already checked in today');
+                    console.log('📅 Status:', error.response.data.message);
+                    this.lastCheckIn = new Date();
+                    this.checkedInToday = true;
+                    return true;
+                }
+                console.error('❌ Check-in error:', error.response.data.message);
+            } else {
+                console.error('❌ Check-in error:', error.message);
             }
-            
-            console.error('Error in check-in:', error.message);
             return false;
         }
     }
@@ -240,7 +250,7 @@ class MonadscoreBot {
                         console.log(`Current points: ${currentPoints}`);
                     } else if (pointsGained > 0) {
                         console.log(`Points updated: ${this.lastPoints} -> ${currentPoints} (+${pointsGained})`);
-                    } else {
+        } else {
                         console.log(`Current points: ${currentPoints} (no change)`);
                     }
                     
@@ -263,39 +273,95 @@ class MonadscoreBot {
         }
     }
 
+    async getNodePoints() {
+        try {
+            const response = await axios({
+                method: 'post',
+                url: `${this.apiUrl}/user/login`,
+                headers: {
+                    'accept': 'application/json, text/plain, */*',
+                    'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'authorization': `Bearer ${this.token}`,
+                    'content-type': 'application/json',
+                    'dnt': '1',
+                    'origin': 'https://monadscore.xyz',
+                    'priority': 'u=1, i',
+                    'referer': 'https://monadscore.xyz/',
+                    'sec-ch-ua': '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"macOS"',
+                    'sec-fetch-dest': 'empty',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'cross-site',
+                    'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
+                },
+                data: {
+                    wallet: this.walletAddress
+                }
+            });
+
+            if (response.data.success && response.data.user && response.data.user.totalPoints !== undefined) {
+                console.log(`🌟 Node Points: ${response.data.user.totalPoints}`);
+                return response.data.user.totalPoints;
+            } else {
+                console.log('⚠️ Failed to fetch node points:', response.data.message || response.data);
+                return null;
+            }
+        } catch (error) {
+            if (error.response?.data) {
+                console.error('❌ Error fetching node points:', error.response.data.message || error.response.data);
+            } else {
+                console.error('❌ Error fetching node points:', error.message);
+            }
+            return null;
+        }
+    }
+
     async monitorPoints() {
         try {
-            console.log('Starting node monitoring...');
+            console.log('🚀 Starting node monitoring...');
             
+            // 1. Start node (sign message & update start time)
             const startSuccess = await this.startNode();
             if (!startSuccess) {
                 throw new Error('Failed to start node');
             }
-
             this.isRunning = true;
-            console.log('✓ Node is now running!');
+            console.log('✅ Node is now running!');
 
-            await this.checkPoints();
+            // 2. Lakukan check-in harian setelah node berhasil start
+            console.log('\n📌 Performing initial check-in...');
+            await this.checkIn();
 
+            // 3. Set interval untuk update start time setiap 30 detik
             setInterval(async () => {
                 try {
                     if (this.isRunning) {
+                        // Reset check-in jika sudah hari baru
+                        const now = new Date();
+                        if (this.lastCheckIn && now.getDate() !== this.lastCheckIn.getDate()) {
+                            console.log('\n📅 New day detected, performing check-in...');
+                            this.checkedInToday = false;
+                            await this.checkIn();
+                        }
+
+                        // Update start time
+                        console.log('\n⏰ Updating node status...');
                         const updateSuccess = await this.updateStartTime();
                         if (updateSuccess) {
-                            console.log('✓ Start time updated successfully');
-                            await this.checkPoints();
+                            console.log('✅ Start time updated successfully');
+                            await this.getNodePoints();
                         }
                     }
                 } catch (error) {
-                    console.error('Error in monitoring interval:', error.message);
+                    console.error('❌ Error in monitoring interval:', error.message);
                 }
-            }, 30000);
+            }, 30000); // 30 detik
 
         } catch (error) {
-            console.error('Error in point monitoring:', error.message);
+            console.error('❌ Error in monitoring:', error.message);
             this.isRunning = false;
-            
-            console.log('Restarting monitoring in 30 seconds...');
+            console.log('🔄 Restarting monitoring in 30 seconds...');
             setTimeout(() => this.monitorPoints(), 30000);
         }
     }
